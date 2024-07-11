@@ -1,14 +1,22 @@
+import logging
+
 import psycopg2
 from flask import Flask, jsonify
 from langchain import OpenAI, SQLDatabase
 from langchain_experimental.sql.base import SQLDatabaseChain
 from sqlalchemy import create_engine
 
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 
-openai_api_key = '<api_key_placeholder>'
+openai_api_key = '<openai-api-key>'
 db_uri = 'postgresql://postgres:mysecretpassword@localhost:5432/jobboard'
 engine = create_engine(db_uri)
+
+db = SQLDatabase(engine)
+llm = OpenAI(api_key=openai_api_key)
+sql_chain = SQLDatabaseChain(llm=llm, database=db, verbose=True)
 
 
 def get_db_connection():
@@ -35,28 +43,32 @@ def get_initial_data():
 @app.route('/analyze', methods=['GET'])
 def analyze_data():
     data = get_initial_data()
-    initial_summary = "Review the following job application data summaries and determine if detailed data is needed: "
-    initial_summary += ''.join([f"Job ID {job[0]} has {job[1]} applications.\n" for job in data])
-
-    db = SQLDatabase(engine)
-    llm = OpenAI(api_key=openai_api_key)
-    sql_chain = SQLDatabaseChain(llm=llm, database=db, verbose=True)
+    initial_data = ''.join([f"Job ID {job[0]} has {job[1]} applications.\n" for job in data])
+    initial_summary = (
+        f"Review this data: '{initial_data}' and check for any anomalies. "
+        f"If you think you may need more data for a better analysis"
+        f"your response MUST be a postgresql SELECT statement for further data from the db")
 
     responses = []
     query_prompt = initial_summary
     for _ in range(3):  # Loop up to 3 times
         query_response = sql_chain.run(query_prompt)
         if "SELECT" in query_response:
-            detailed_data = db.run(query_response)
-            responses.append({
-                "prompt": query_prompt,
-                "sql_query": query_response,
-                "detailed_data": detailed_data
-            })
-            # Update the prompt with new data summary for further analysis
-            query_prompt = (f"Given this detailed data: {detailed_data}, if more details are needed, "
-                            f"write a complete SQL query to retrieve them. "
-                            f"Respond only with sql string that is ready to use with postgresql")
+            try:
+                detailed_data = db.run(query_response)
+                responses.append({
+                    "prompt": query_prompt,
+                    "sql_query": query_response,
+                    "detailed_data": detailed_data
+                })
+                # Update the prompt with new data summary for further analysis
+                query_prompt = (f"Review this data: '{detailed_data}' and check for any anomalies. "
+                                f"If you think you may need more data for a better analysis "
+                                f"your response MUST be a postgresql SELECT statement for further data from the db")
+
+            except Exception as e:
+                logger.error(f"error during running db query: {e}")
+
         else:
             responses.append({
                 "prompt": query_prompt,
