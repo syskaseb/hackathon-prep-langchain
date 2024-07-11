@@ -39,6 +39,7 @@ packaging==24.1
 psycopg2==2.9.9
 pydantic==2.8.2
 pydantic_core==2.20.1
+python-dotenv==1.0.1
 PyYAML==6.0.1
 regex==2024.5.15
 requests==2.32.3
